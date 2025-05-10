@@ -32,6 +32,9 @@
  * onClearCache  () → void
  *               Clears the IndexedDB model cache.
  *
+ * onCancelDownload?() → void
+ *               Cancels the current download.
+ *
  * ModelMeta
  * ---------
  * Mirrors the structure assembled in StreamClient; reproduced here so the
@@ -81,6 +84,7 @@ export interface ModelSelectorProps {
     downloadPct: number | null;   // e.g. 0.37 → 37 %
     ready: boolean;               // model mounted in the FS
     onClearCache(): void;         // handler for "Clear cache" button
+    onCancelDownload?(): void;    // handler for "Cancel Download" button
 }
 
 /* ─────────────── constants ─────────────────────────────────────────── */
@@ -145,6 +149,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
         downloadPct,
         ready,
         onClearCache,
+        onCancelDownload,
     }) => {
         // Disable actions while downloading
         const isDownloading = downloadPct !== null && downloadPct < 1;
@@ -289,13 +294,22 @@ const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
                                             : "Idle"}
                                 </Badge>
                             </div>
-                            <Button
-                                variant="outline"
-                                onClick={handleClearCache}
-                                disabled={isDownloading}
-                            >
-                                Clear Cache
-                            </Button>
+                            {downloadPct !== null && downloadPct < 1 ? (
+                                <Button
+                                    variant="destructive"
+                                    onClick={onCancelDownload}
+                                >
+                                    Cancel Download
+                                </Button>
+                            ) : (
+                                <Button
+                                    variant="outline"
+                                    onClick={handleClearCache}
+                                    disabled={isDownloading}
+                                >
+                                    Clear Cache
+                                </Button>
+                            )}
                         </div>
                     </div>
                 </CardContent>

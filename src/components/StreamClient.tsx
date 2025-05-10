@@ -160,6 +160,7 @@ export default function StreamClient() {
         source: MediaStreamAudioSourceNode;
         proc: ScriptProcessorNode;
     } | null>(null);
+    const downloadAbortRef = useRef<AbortController | null>(null);
 
     /* -------------------- logging helper --------------------------- */
     const log = useCallback((msg: string) => {
@@ -244,14 +245,14 @@ export default function StreamClient() {
     const fetchWithProgress = async (
         url: string,
         cb: (pct: number) => void,
+        abortController?: AbortController
     ): Promise<Uint8Array> => {
-        const r = await fetch(url);
+        const r = await fetch(url, { signal: abortController?.signal });
         if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
         const total = Number(r.headers.get('Content-Length')) || 0;
         const reader = r.body.getReader();
         const chunks: Uint8Array[] = [];
         let received = 0;
-        /* stream */
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -301,20 +302,38 @@ export default function StreamClient() {
                 return;
             }
 
+            const abortController = new AbortController();
+            downloadAbortRef.current = abortController;
+
             try {
-                const bytes = await fetchWithProgress(meta.url, setPct);
+                const bytes = await fetchWithProgress(meta.url, setPct, abortController);
                 setPct(1);
                 writeModelToFS(bytes);
                 await putCached(id, bytes);
                 log('js: model cached');
                 setReady(true);
                 markModelCached(id);
-            } catch (e) {
-                log(`js: download failed → ${e}`);
+            } catch (e: any) {
+                if (e.name === 'AbortError') {
+                    log('js: download cancelled');
+                } else {
+                    log(`js: download failed → ${e}`);
+                }
+            } finally {
+                downloadAbortRef.current = null;
             }
         },
         [models, log],
     );
+
+    const handleCancelDownload = () => {
+        if (downloadAbortRef.current) {
+            downloadAbortRef.current.abort();
+            setPct(null);
+            setSelectedModelId(null);
+            setReady(false);
+        }
+    };
 
     /* ------------------- audio & recording ------------------------- */
     const startRecording = async () => {
@@ -479,6 +498,7 @@ export default function StreamClient() {
                         setSelectedModelId(null);
                         setPct(null);
                     }}
+                    onCancelDownload={handleCancelDownload}
                 />
 
                 {/* transcription ------------------------------------------ */}
