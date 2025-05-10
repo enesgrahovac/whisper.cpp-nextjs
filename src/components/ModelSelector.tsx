@@ -152,7 +152,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
         // Handler to clear cache and reset selection/status
         const handleClearCache = () => {
             onClearCache();
-            onSelect('');
         };
 
         return (
