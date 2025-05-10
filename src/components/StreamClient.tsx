@@ -362,10 +362,10 @@ export default function StreamClient() {
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-8">
                 <div>
                     <h1 className="text-3xl font-bold text-center sm:text-left">
-                        Real-time Speech Recognition, 100% client-side
+                        Real-time Speech Recognition, 100% Client-side
                     </h1>
                     <h2 className="text-2xl font-bold mt-2 text-center sm:text-left text-muted-foreground">
-                        Built with Next.js, Typescript, and Shadcn/UI
+                        Powered by Next.js, TypeScript, and Shadcn/UI
                     </h2>
                 </div>
                 <a
