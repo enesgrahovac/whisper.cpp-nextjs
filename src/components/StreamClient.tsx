@@ -88,6 +88,8 @@ export default function StreamClient() {
     const [selectedModelId, setSelectedModelId] = useState<ModelId | null>(null);
     // Track which models are cached
     const [cachedModels, setCachedModels] = useState<Record<ModelId, boolean>>({} as Record<ModelId, boolean>);
+    // Add state for debug log visibility
+    const [showDebugLog, setShowDebugLog] = useState(false);
 
     /* log helper ----------------------------------------------------- */
     const log = useCallback((msg: string) => {
@@ -498,19 +500,33 @@ export default function StreamClient() {
                 </CardContent>
             </Card>
 
-            <Card>
-                <CardHeader>
-                    <CardTitle>Debug Log</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <Textarea
-                        ref={logRef}
-                        rows={10}
-                        className="font-mono text-xs bg-black text-green-400 resize-none min-h-[150px] max-h-[150px] overflow-y-auto"
-                        readOnly
-                    />
-                </CardContent>
-            </Card>
+            {/* Add a toggle button for advanced users */}
+            <div className="flex justify-end mb-4">
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowDebugLog(v => !v)}
+                >
+                    {showDebugLog ? "Hide Debug Log" : "Show Debug Log"}
+                </Button>
+            </div>
+
+            {/* Conditionally render the debug log */}
+            {showDebugLog && (
+                <Card>
+                    <CardHeader>
+                        <CardTitle>Debug Log</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <Textarea
+                            ref={logRef}
+                            rows={10}
+                            className="font-mono text-xs bg-black text-green-400 resize-none min-h-[150px] max-h-[150px] overflow-y-auto"
+                            readOnly
+                        />
+                    </CardContent>
+                </Card>
+            )}
         </div>
     );
 }
