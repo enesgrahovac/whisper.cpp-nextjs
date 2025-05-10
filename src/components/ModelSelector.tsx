@@ -127,6 +127,12 @@ const variantTooltip: Record<string, string> = {
 /* small helper ---------------------------------------------------- */
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 
+const formatSize = (sizeMB: number | null) => {
+    if (sizeMB === null) return "-";
+    if (sizeMB >= 1000) return `${(sizeMB / 1024).toFixed(1)} GB`;
+    return `${sizeMB.toFixed(0)} MB`;
+};
+
 /* ------------------------------------------------------------------
    component
 ------------------------------------------------------------------ */
@@ -238,7 +244,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
                                                                 </TooltipContent>
                                                             </Tooltip>
                                                             <span className="ml-auto">
-                                                                {m.sizeMB !== null ? `${m.sizeMB.toFixed(0)} MB` : "-"}
+                                                                {formatSize(m.sizeMB)}
                                                             </span>
                                                         </div>
                                                     </Button>
