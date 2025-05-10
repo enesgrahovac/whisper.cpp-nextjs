@@ -85,6 +85,9 @@ export default function StreamClient() {
     const [downloadPct, setPct] = useState<number | null>(null);
     const [isRecording, setIsRecording] = useState(false);
     const [isTranscriptPinned, setIsTranscriptPinned] = useState(true);
+    const [selectedModelId, setSelectedModelId] = useState<ModelId | null>(null);
+    // Track which models are cached
+    const [cachedModels, setCachedModels] = useState<Record<ModelId, boolean>>({} as Record<ModelId, boolean>);
 
     /* log helper ----------------------------------------------------- */
     const log = useCallback((msg: string) => {
@@ -98,6 +101,26 @@ export default function StreamClient() {
     useEffect(() => {
         (window as any).printTextarea = log;
     }, [log]);
+
+    // Check cache status on mount and when models change
+    useEffect(() => {
+        let isMounted = true;
+        (async () => {
+            const result: Record<ModelId, boolean> = {} as Record<ModelId, boolean>;
+            for (const id of Object.keys(MODELS) as ModelId[]) {
+                const cached = await getCached(id);
+                if (!isMounted) return;
+                result[id] = !!cached;
+            }
+            setCachedModels(result);
+        })();
+        return () => { isMounted = false; };
+    }, []);
+
+    // When a model is cached, update the cache state
+    const markModelCached = (id: ModelId) => {
+        setCachedModels(prev => ({ ...prev, [id]: true }));
+    };
 
     /* pre-bootstrap a dummy Module object --------------------------- */
     useEffect(() => {
@@ -148,6 +171,8 @@ export default function StreamClient() {
             });
             log('js: model cache cleared successfully');
             setReady(false);
+            setCachedModels({} as Record<ModelId, boolean>);
+            setSelectedModelId(null);
         } catch (error) {
             log(`js: failed to clear cache: ${error}`);
         }
@@ -184,6 +209,7 @@ export default function StreamClient() {
 
     /* ---------- model loader -------------------------------------- */
     const loadModel = async (id: ModelId) => {
+        setSelectedModelId(id);
         setReady(false);
         setPct(null);
         log(`js: loading model "${id}" …`);
@@ -203,6 +229,7 @@ export default function StreamClient() {
             log(`js: using cached copy (${(cached.length / 1_048_576).toFixed(1)} MB)`);
             writeModelToFS(cached);
             setReady(true);
+            markModelCached(id);
             return;
         }
 
@@ -213,6 +240,7 @@ export default function StreamClient() {
             await putCached(id, bytes);
             log('js: model cached');
             setReady(true);
+            markModelCached(id);
         } catch (e) {
             log(`js: download failed → ${e}`);
         }
@@ -329,29 +357,73 @@ export default function StreamClient() {
             <Script src="/whisper/stream/helpers.js" strategy="afterInteractive" />
             <Script src="/whisper/stream/stream.js" strategy="afterInteractive" />
 
-            <h1 className="text-3xl font-bold mb-8 text-center">
-                Whisper.wasm - Real-time Speech Recognition
-            </h1>
-
-            <h2 className="text-2xl font-bold mb-4 text-center">
-                Built with Next.js, Typescript, and Shadcn/UI
-            </h2>
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-8">
+                <div>
+                    <h1 className="text-3xl font-bold text-center sm:text-left">
+                        Real-time Speech Recognition, 100% client-side
+                    </h1>
+                    <h2 className="text-2xl font-bold mt-2 text-center sm:text-left text-muted-foreground">
+                        Built with Next.js, Typescript, and Shadcn/UI
+                    </h2>
+                </div>
+                <a
+                    href="https://github.com/enesgrahovac/whisper.cpp-nextjs"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-black text-white hover:bg-gray-800 transition-colors shadow-md border border-gray-800"
+                    aria-label="View on GitHub"
+                >
+                    <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="20"
+                        height="20"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                        className="inline-block"
+                    >
+                        <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M12 2C6.477 2 2 6.484 2 12.021c0 4.428 2.865 8.184 6.839 9.504.5.092.682-.217.682-.483 0-.237-.009-.868-.014-1.703-2.782.605-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.004.07 1.532 1.032 1.532 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.339-2.221-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.987 1.029-2.686-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.025A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.295 2.748-1.025 2.748-1.025.546 1.378.202 2.397.1 2.65.64.699 1.028 1.593 1.028 2.686 0 3.847-2.337 4.695-4.566 4.944.359.309.678.919.678 1.852 0 1.336-.012 2.417-.012 2.747 0 .268.18.579.688.481C19.138 20.2 22 16.447 22 12.021 22 6.484 17.523 2 12 2z"
+                        />
+                    </svg>
+                    <span className="font-medium">GitHub</span>
+                </a>
+            </div>
 
             <Card className="mb-8">
                 <CardHeader>
                     <CardTitle>Select Model</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <div className="flex flex-col gap-3 sm:grid sm:grid-cols-2 md:grid-cols-4">
                         {(Object.keys(MODELS) as ModelId[]).map(id => (
                             <Button
                                 key={id}
-                                variant={ready && downloadPct === 1 ? "secondary" : "outline"}
+                                variant={
+                                    selectedModelId === id
+                                        ? "default"
+                                        : ready && downloadPct === 1
+                                            ? "secondary"
+                                            : "outline"
+                                }
                                 onClick={() => loadModel(id)}
                                 disabled={downloadPct !== null && downloadPct < 1}
-                                className="w-full"
+                                className={`w-full flex flex-col items-start justify-center px-3 py-2 min-h-[56px] ${selectedModelId === id ? "ring-2 ring-primary" : ""}`}
                             >
-                                {id} ({MODELS[id].sizeMB} MB)
+                                <div className="flex items-center w-full">
+                                    {selectedModelId === id && (
+                                        <span className="mr-2">✅</span>
+                                    )}
+                                    <span className="font-semibold">{id}</span>
+                                </div>
+                                <span className="text-xs text-muted-foreground mt-1">
+                                    {cachedModels[id]
+                                        ? "cached"
+                                        : `${MODELS[id].sizeMB} MB`}
+                                </span>
                             </Button>
                         ))}
                     </div>
