@@ -24,6 +24,7 @@ declare global {
             print: (...args: unknown[]) => void;
             printErr: (...args: unknown[]) => void;
         } & Record<string, unknown>;
+        _wasmReady?: boolean;
     }
 
     // helper attached by the original demo – defined by our component
