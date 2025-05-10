@@ -1,63 +1,102 @@
 'use client';
 
+/*
+  StreamClient – complete end‑to‑end page:
+    • Dynamic catalogue (via HF API) + <ModelSelector>
+    • IndexedDB caching & download progress
+    • Recording / transcription UI – unchanged from original
+
+  All occurrences of the old MODELS/ModelId union have been removed.
+  Model ids are now plain strings (the ggml‑*.bin filenames).
+*/
+
 import React, {
     useCallback,
     useEffect,
+    useMemo,
     useRef,
     useState,
 } from 'react';
 import Script from 'next/script';
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Button } from '@/components/ui/button';
+import {
+    Card,
+    CardContent,
+    CardHeader,
+    CardTitle,
+} from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
+import { Textarea } from '@/components/ui/textarea';
+import {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog';
+import ModelSelector from '@/components/ModelSelector';
+import type { ModelMeta } from '@/components/ModelSelector';
 
-/* ---------- constants & types ---------- */
-type ModelId = 'tiny.en' | 'base.en' | 'tiny-en-q5_1' | 'base-en-q5_1' | 'small.en-q5_1' | 'large-v3-turbo-q5_0' | 'large-v3-turbo-q8_0';
-interface ModelMeta {
-    url: string;
-    sizeMB: number;
-}
-const MODELS: Record<ModelId, ModelMeta> = {
-    'tiny.en': {
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin',
-        sizeMB: 75,
-    },
-    'base.en': {
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin',
-        sizeMB: 142,
-    },
-    'tiny-en-q5_1': {
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en-q5_1.bin',
-        sizeMB: 31,
-    },
-    'base-en-q5_1': {
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin',
-        sizeMB: 57,
-    },
-    'small.en-q5_1': {
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin',
-        sizeMB: 181,
-    },
-    'large-v3-turbo-q5_0': {
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin',
-        sizeMB: 574,
-    },
-    'large-v3-turbo-q8_0': {
-        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin',
-        sizeMB: 834,
-    },
-};
+/* ------------------------------- constants ------------------------ */
+const HF_API =
+    'https://huggingface.co/api/models/ggerganov/whisper.cpp?expand=siblings';
+
+/** fall‑back list for offline */
+const FALLBACK_BINS = [
+    'ggml-tiny.en-q5_1.bin',
+    'ggml-base.en-q5_1.bin',
+    'ggml-small.en-q5_1.bin',
+    'ggml-large-v3-turbo-q5_0.bin',
+    'ggml-large-v3-turbo-q8_0.bin',
+];
 
 const DB_NAME = 'whisper-model-cache';
 const DB_STORE = 'models';
 const WASM_MODEL = 'whisper.bin';
-
 const SAMPLE_RATE = 16_000;
+/* --------------------------- helpers ------------------------------ */
+function parseFilename(fname: string): Omit<ModelMeta, "url" | "sizeMB"> {
+    /* strip prefix + .bin ---------------------------------------------------- */
+    let name = fname.replace(/^ggml-/, "").replace(/\.bin$/, "");
 
-/* ---------- tiny IndexedDB helper ---------- */
+    /* language ----------------------------------------------------------------*/
+    const lang: "en" | "multi" = name.includes(".en") ? "en" : "multi";
+    name = name.replace(".en", "");
+
+    /* quantisation ----------------------------------------------------------- */
+    const qMatch = fname.match(/-(q\d_?\d?)\.bin$/);          //  q8_0  |  q5_1 …
+    const quant = qMatch ? qMatch[1] : null;
+    if (quant) name = name.replace(`-${quant}`, "");          // remove for split
+
+    /* split remaining tokens ------------------------------------------------- */
+    const parts = name.split("-");
+    const version = parts.shift()!;                           // tiny | base | …
+    let rev: string | null = null;                            // v1 | v2 | v3
+    if (parts[0]?.startsWith("v")) rev = parts.shift()!;
+
+    const variant = parts.length ? parts.join("-") : null;    // turbo | fp16 | …
+
+    return {
+        id: fname,
+        version,          // e.g. large
+        rev,              // e.g. v3
+        variant,          // e.g. turbo
+        lang,             // en | multi
+        quant,            // q5_0 | null
+    };
+}
+
+async function headSizeMB(url: string): Promise<number | null> {
+    try {
+        const res = await fetch(url, { method: 'HEAD' });
+        const len = res.headers.get('Content-Length');
+        return len ? +len / 1_048_576 : null;
+    } catch {
+        return null;
+    }
+}
+
 function openDB(): Promise<IDBDatabase> {
     return new Promise((ok, err) => {
         const req = indexedDB.open(DB_NAME, 1);
@@ -68,7 +107,7 @@ function openDB(): Promise<IDBDatabase> {
 }
 async function getCached(key: string): Promise<Uint8Array | null> {
     const db = await openDB();
-    return new Promise(res => {
+    return new Promise((res) => {
         const r = db.transaction(DB_STORE).objectStore(DB_STORE).get(key);
         r.onsuccess = () => res(r.result ? new Uint8Array(r.result) : null);
         r.onerror = () => res(null);
@@ -80,34 +119,49 @@ async function putCached(key: string, data: Uint8Array) {
     tx.objectStore(DB_STORE).put(data, key);
 }
 
-/* ---------- component ---------- */
+/* ------------------------------------------------------------------
+   component
+------------------------------------------------------------------ */
 export default function StreamClient() {
+    /* ----------------------- catalogue ----------------------------- */
+    const [models, setModels] = useState<ModelMeta[]>([]);
+    const [fetchError, setFetchError] = useState<string | null>(null);
+
+    /* cache awareness */
+    const [cachedModels, setCachedModels] = useState<Record<string, boolean>>({});
+
+    /* selection & download state */
+    const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+    const [downloadPct, setPct] = useState<number | null>(null);
+    const [ready, setReady] = useState(false);
+
+    /* modal */
+    const [pendingModelId, setPendingModelId] = useState<string | null>(null);
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
+
+    /* WASM runtime flag */
+    const [wasmReady, setWasmReady] = useState(false);
+
+    /* recording state */
+    const [isRecording, setIsRecording] = useState(false);
+    const [isTranscriptPinned, setIsTranscriptPinned] = useState(true);
+    const [showDebugLog, setShowDebugLog] = useState(false);
+
     /* refs ----------------------------------------------------------- */
     const transcriptRef = useRef<HTMLDivElement>(null);
     const logRef = useRef<HTMLTextAreaElement>(null);
     const statusRef = useRef<HTMLSpanElement>(null);
-
     const instanceRef = useRef<number | null>(null);
     const contextRef = useRef<AudioContext | null>(null);
     const accAudioRef = useRef<Float32Array | null>(null);
     const pollTimerRef = useRef<number | null>(null);
+    const recorderRef = useRef<{
+        stream: MediaStream;
+        source: MediaStreamAudioSourceNode;
+        proc: ScriptProcessorNode;
+    } | null>(null);
 
-    /* state ---------------------------------------------------------- */
-    const [wasmReady, setWasmReady] = useState(false);
-    const [ready, setReady] = useState(false);
-    const [downloadPct, setPct] = useState<number | null>(null);
-    const [isRecording, setIsRecording] = useState(false);
-    const [isTranscriptPinned, setIsTranscriptPinned] = useState(true);
-    const [selectedModelId, setSelectedModelId] = useState<ModelId | null>(null);
-    // Track which models are cached
-    const [cachedModels, setCachedModels] = useState<Record<ModelId, boolean>>({} as Record<ModelId, boolean>);
-    // Add state for debug log visibility
-    const [showDebugLog, setShowDebugLog] = useState(false);
-    // Modal state
-    const [pendingModelId, setPendingModelId] = useState<ModelId | null>(null);
-    const [showConfirmModal, setShowConfirmModal] = useState(false);
-
-    /* log helper ----------------------------------------------------- */
+    /* -------------------- logging helper --------------------------- */
     const log = useCallback((msg: string) => {
         console.log(msg);
         if (!logRef.current) return;
@@ -115,69 +169,81 @@ export default function StreamClient() {
         logRef.current.scrollTop = logRef.current.scrollHeight;
     }, []);
 
-    /* expose printTextarea for legacy scripts ----------------------- */
     useEffect(() => {
         (window as any).printTextarea = log;
     }, [log]);
 
-    // Check cache status on mount and when models change
+    /* -------------------- load catalogue --------------------------- */
+    /* catalogue fetch */
     useEffect(() => {
-        let isMounted = true;
         (async () => {
-            const result: Record<ModelId, boolean> = {} as Record<ModelId, boolean>;
-            for (const id of Object.keys(MODELS) as ModelId[]) {
-                const cached = await getCached(id);
-                if (!isMounted) return;
-                result[id] = !!cached;
+            try {
+                const r = await fetch(HF_API, { cache: 'force-cache' });
+                const j = await r.json();
+                const cat: ModelMeta[] = j.siblings.filter((f: any) => f.rfilename.endsWith('.bin')).map((f: any) => ({
+                    ...parseFilename(f.rfilename),
+                    url: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${f.rfilename}`,
+                    sizeMB: null,
+                }));
+                /* parallel HEAD size fetch */
+                await Promise.all(cat.map(async m => { m.sizeMB = await headSizeMB(m.url); }));
+                setModels(cat);
+            } catch (e: any) {
+                setFetchError(e.message);
+                setModels(FALLBACK_BINS.map(id => ({ ...parseFilename(id), url: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${id}`, sizeMB: null })));
             }
-            setCachedModels(result);
         })();
-        return () => { isMounted = false; };
     }, []);
 
-    // When a model is cached, update the cache state
-    const markModelCached = (id: ModelId) => {
-        setCachedModels(prev => ({ ...prev, [id]: true }));
-    };
+    /* -------------------- compute grouping ------------------------- */
+    const grouped = useMemo(() => {
+        const out: Record<string, ModelMeta[]> = {};
+        for (const m of models) (out[m.version] ||= []).push(m);
+        for (const v in out) {
+            out[v].sort((a, b) => {
+                if (a.lang !== b.lang) return a.lang === 'multi' ? -1 : 1;
+                if (a.quant === b.quant) return 0;
+                if (a.quant === null) return -1;
+                if (b.quant === null) return 1;
+                return a.quant!.localeCompare(b.quant!);
+            });
+        }
+        return out;
+    }, [models]);
 
-    /* ---------- helpers ------------------------------------------- */
+    /* ------------------ cache presence check ----------------------- */
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            const map: Record<string, boolean> = {};
+            for (const m of models) {
+                const c = await getCached(m.id);
+                if (cancelled) return;
+                map[m.id] = !!c;
+            }
+            setCachedModels(map);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [models]);
+
+    const markModelCached = (id: string) =>
+        setCachedModels((p) => ({ ...p, [id]: true }));
+
+    /* -------------------- WASM helpers ----------------------------- */
     const writeModelToFS = (bytes: Uint8Array) => {
         try {
-            if (typeof window.Module?.FS_unlink === "function") {
+            if (typeof window.Module?.FS_unlink === 'function') {
                 window.Module.FS_unlink(WASM_MODEL);
             }
         } catch { }
-        if (typeof window.Module?.FS_createDataFile === "function") {
-            window.Module.FS_createDataFile('/', WASM_MODEL, bytes, true, true);
-        } else {
-            log('js: FS_createDataFile is not available on the WASM module.');
-            // Optionally, throw or handle this case as needed
-        }
+        window.Module?.FS_createDataFile?.('/', WASM_MODEL, bytes, true, true);
     };
 
-    const clearCache = async () => {
-        log('js: clearing model cache...');
-        try {
-            const db = await openDB();
-            const tx = db.transaction(DB_STORE, 'readwrite');
-            await new Promise<void>((resolve, reject) => {
-                const req = tx.objectStore(DB_STORE).clear();
-                req.onsuccess = () => resolve();
-                req.onerror = () => reject(req.error);
-            });
-            log('js: model cache cleared successfully');
-            setReady(false);
-            setCachedModels({} as Record<ModelId, boolean>);
-            setSelectedModelId(null);
-        } catch (error) {
-            log(`js: failed to clear cache: ${error}`);
-        }
-    };
-
-    // --- Improved fetchWithProgress -------------------------------------------------
     const fetchWithProgress = async (
         url: string,
-        cb: (pct: number) => void
+        cb: (pct: number) => void,
     ): Promise<Uint8Array> => {
         const r = await fetch(url);
         if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
@@ -185,6 +251,7 @@ export default function StreamClient() {
         const reader = r.body.getReader();
         const chunks: Uint8Array[] = [];
         let received = 0;
+        /* stream */
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
@@ -194,7 +261,6 @@ export default function StreamClient() {
                 if (total) cb(received / total);
             }
         }
-        /* concat */
         const out = new Uint8Array(received);
         let pos = 0;
         for (const c of chunks) {
@@ -204,87 +270,75 @@ export default function StreamClient() {
         return out;
     };
 
-    /* ---------- model loader -------------------------------------- */
-    const loadModel = async (id: ModelId) => {
-        setSelectedModelId(id);
-        setReady(false);
-        setPct(null);
-        log(`js: loading model "${id}" …`);
+    /* -------------------- model loader ----------------------------- */
+    const loadModel = useCallback(
+        async (id: string) => {
+            const meta = models.find((m) => m.id === id);
+            if (!meta) return;
+            setSelectedModelId(id);
+            setReady(false);
+            setPct(null);
+            log(`js: loading model "${id}" …`);
 
-        // Wait until the runtime exists – otherwise FS_* helpers are not there
-        if (!window._wasmReady) {
-            log('js: waiting for WASM runtime …');
-            await new Promise<void>(ok => {
-                const t = setInterval(() => {
-                    if (window._wasmReady) { clearInterval(t); ok(); }
-                }, 50);
-            });
-        }
+            if (!window._wasmReady) {
+                log('js: waiting for WASM runtime …');
+                await new Promise<void>((ok) => {
+                    const t = setInterval(() => {
+                        if (window._wasmReady) {
+                            clearInterval(t);
+                            ok();
+                        }
+                    }, 50);
+                });
+            }
 
-        const cached = await getCached(id);
-        if (cached) {
-            log(`js: using cached copy (${(cached.length / 1_048_576).toFixed(1)} MB)`);
-            writeModelToFS(cached);
-            setReady(true);
-            markModelCached(id);
-            return;
-        }
+            const cached = await getCached(id);
+            if (cached) {
+                log(`js: using cached copy (${(cached.length / 1_048_576).toFixed(1)} MB)`);
+                writeModelToFS(cached);
+                setReady(true);
+                markModelCached(id);
+                return;
+            }
 
-        try {
-            const bytes = await fetchWithProgress(MODELS[id].url, setPct);
-            setPct(1);
-            writeModelToFS(bytes);
-            await putCached(id, bytes);
-            log('js: model cached');
-            setReady(true);
-            markModelCached(id);
-        } catch (e) {
-            log(`js: download failed → ${e}`);
-        }
-    };
+            try {
+                const bytes = await fetchWithProgress(meta.url, setPct);
+                setPct(1);
+                writeModelToFS(bytes);
+                await putCached(id, bytes);
+                log('js: model cached');
+                setReady(true);
+                markModelCached(id);
+            } catch (e) {
+                log(`js: download failed → ${e}`);
+            }
+        },
+        [models, log],
+    );
 
-    type RecorderHandles = {
-        stream: MediaStream;
-        source: MediaStreamAudioSourceNode;
-        proc: ScriptProcessorNode;
-    };
-    const recorderRef = useRef<RecorderHandles | null>(null);
-
+    /* ------------------- audio & recording ------------------------- */
     const startRecording = async () => {
-        /* one AudioContext for the whole session */
         if (!contextRef.current) {
             contextRef.current = new AudioContext({ sampleRate: SAMPLE_RATE });
             await contextRef.current.audioWorklet?.addModule?.('/whisper/stream/dummy.js').catch(() => { });
         }
         const ctx = contextRef.current;
-
-        /* mic stream --------------------------------------------------- */
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         const source = ctx.createMediaStreamSource(stream);
-
-        /* fallback ScriptProcessorNode (works everywhere) -------------- */
         const proc = ctx.createScriptProcessor(4096, 1, 1);
-        proc.onaudioprocess = e => {
+        proc.onaudioprocess = (e) => {
             const input = e.inputBuffer.getChannelData(0);
-            /* copy the frame because the underlying buffer is recycled */
             const chunk = new Float32Array(input);
-
-            /* accumulate -------------------------------------------------- */
             const prev = accAudioRef.current;
             const merged = new Float32Array((prev?.length ?? 0) + chunk.length);
             if (prev) merged.set(prev);
             merged.set(chunk, prev?.length ?? 0);
             accAudioRef.current = merged;
-
-            /* send to WASM ----------------------------------------------- */
-            if (instanceRef.current)
-                window.Module?.set_audio?.(instanceRef.current, merged);
+            if (instanceRef.current) window.Module?.set_audio?.(instanceRef.current, merged);
         };
-
         source.connect(proc);
-        proc.connect(ctx.destination);      // required in Firefox
-
-        recorderRef.current = { stream, source, proc };
+        proc.connect(ctx.destination);
+        recorderRef.current = { stream, source, proc } as any;
     };
 
     const stopRecording = () => {
@@ -292,34 +346,24 @@ export default function StreamClient() {
         const { stream, source, proc } = recorderRef.current;
         proc.disconnect();
         source.disconnect();
-        stream.getTracks().forEach(t => t.stop());
+        stream.getTracks().forEach((t) => t.stop());
         recorderRef.current = null;
-
-        /* keep the AudioContext alive – Whisper re-uses it */
         accAudioRef.current = null;
     };
 
-    /* ---------- start / stop buttons ------------------------------ */
     const startWhisper = () => {
-        if (!ready) return;
-        if (!wasmReady || !ready) {
-            log('js: Not ready (wasmReady=' + wasmReady + ', modelReady=' + ready + ')');
-            return;
-        }
+        if (!ready || !wasmReady) return;
         if (!instanceRef.current) {
             instanceRef.current = window.Module?.init?.(WASM_MODEL);
             log(`js: whisper init → ${instanceRef.current}`);
         }
-        startRecording().catch(err => log(`js: mic error ${err}`));
+        startRecording().catch((err) => log(`js: mic error ${err}`));
         setIsRecording(true);
-
         pollTimerRef.current = window.setInterval(() => {
             const txt = window.Module?.get_transcribed?.();
             if (txt && transcriptRef.current) {
                 transcriptRef.current.textContent += txt + '\n';
-                if (isTranscriptPinned) {
-                    scrollTranscriptToBottom();
-                }
+                if (isTranscriptPinned) transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
             }
             statusRef.current!.textContent = window.Module?.get_status?.() ?? '';
         }, 150);
@@ -329,40 +373,27 @@ export default function StreamClient() {
         stopRecording();
         setIsRecording(false);
         if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
-        // Reset the status text when stopping
-        if (statusRef.current) statusRef.current.textContent = "recording stopped";
+        if (statusRef.current) statusRef.current.textContent = 'recording stopped';
     };
 
-    /* ---------- render ------------------------------------------- */
-    // Helper to scroll transcript to bottom
-    const scrollTranscriptToBottom = useCallback(() => {
-        const el = transcriptRef.current;
-        if (el) {
-            el.scrollTop = el.scrollHeight;
-        }
-    }, []);
-
-    // onScroll handler for transcript
+    /* ------------------- scroll helper ----------------------------- */
     const handleTranscriptScroll = useCallback(() => {
         const el = transcriptRef.current;
         if (!el) return;
-        // Consider "pinned" if within 10px of the bottom
         const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 10;
         setIsTranscriptPinned(pinned);
     }, []);
 
-    // --- Modal logic for confirmation before download ---
-    const handleModelButtonClick = (id: ModelId) => {
-        if (cachedModels[id]) {
-            // If model is already cached, load it directly (no dialog)
-            loadModel(id);
-        } else {
+    /* ------------------- modal logic ------------------------------- */
+    const requestModel = (id: string) => {
+        if (cachedModels[id]) loadModel(id);
+        else {
             setPendingModelId(id);
             setShowConfirmModal(true);
         }
     };
 
-    const handleConfirmDownload = async () => {
+    const confirmDownload = async () => {
         if (pendingModelId) {
             setShowConfirmModal(false);
             await loadModel(pendingModelId);
@@ -370,51 +401,47 @@ export default function StreamClient() {
         }
     };
 
-    const handleCancelDownload = () => {
-        setShowConfirmModal(false);
-        setPendingModelId(null);
-    };
-
-    // add right below the other useEffects
+    /* ------------------- wasm ready listener ----------------------- */
     useEffect(() => {
-        // if the runtime was already ready before React mounted
         if ((window as any)._wasmReady) setWasmReady(true);
-
         const handler = () => setWasmReady(true);
-        window.addEventListener("wasm-ready", handler);
-        return () => window.removeEventListener("wasm-ready", handler);
+        window.addEventListener('wasm-ready', handler);
+        return () => window.removeEventListener('wasm-ready', handler);
     }, []);
 
+    /* ------------------------ render ------------------------------- */
+    const groupedMemo = grouped; // just to satisfy eslint hooks
+    const pendingSizeMB = useMemo(() => {
+        if (!pendingModelId) return null
+        const hit = models.find((m) => m.id === pendingModelId)
+        return hit?.sizeMB ?? null
+    }, [pendingModelId, models])
     return (
         <>
-            {/* 1. Define Module BEFORE loading WASM */}
+            {/* WASM module definition & glue */}
             <Script id="define-module" strategy="beforeInteractive">
                 {`
-                    window.Module = {
-                        print: msg => window.printTextarea && window.printTextarea(msg),
-                        printErr: msg => window.printTextarea && window.printTextarea(msg),
-                        onRuntimeInitialized() {
-                            window._wasmReady = true;                // flag
-                            window.dispatchEvent(new Event("wasm-ready")); // ✨ notify React
-                            if (window.printTextarea) window.printTextarea("js: WASM runtime initialised 👍");
-                        }
-                    };
-                    window._wasmReady = false;
-                `}
+          window.Module = {
+            print: msg => window.printTextarea && window.printTextarea(msg),
+            printErr: msg => window.printTextarea && window.printTextarea(msg),
+            onRuntimeInitialized() {
+              window._wasmReady = true;
+              window.dispatchEvent(new Event('wasm-ready'));
+              if (window.printTextarea) window.printTextarea('js: WASM runtime initialised 👍');
+            }
+          };
+          window._wasmReady = false;
+        `}
             </Script>
-            {/* 2. Load helpers and WASM glue */}
             <Script src="/whisper/stream/helpers.js" strategy="afterInteractive" />
             <Script src="/whisper/stream/stream.js" strategy="afterInteractive" />
 
             <div className="container mx-auto px-4 py-8 max-w-4xl">
+                {/* header -------------------------------------------------- */}
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-8">
                     <div>
-                        <h1 className="text-3xl font-bold text-center sm:text-left">
-                            Real-time Speech Recognition, 100% Client-side
-                        </h1>
-                        <h2 className="text-2xl font-bold mt-2 text-center sm:text-left text-muted-foreground">
-                            Powered by Next.js, TypeScript, and Shadcn/UI
-                        </h2>
+                        <h1 className="text-3xl font-bold text-center sm:text-left">Real-time Speech Recognition, 100% Client-side</h1>
+                        <h2 className="text-2xl font-bold mt-2 text-center sm:text-left text-muted-foreground">Powered by Next.js, TypeScript, and Shadcn/UI</h2>
                     </div>
                     <a
                         href="https://github.com/enesgrahovac/whisper.cpp-nextjs"
@@ -423,97 +450,43 @@ export default function StreamClient() {
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-black text-white hover:bg-gray-800 transition-colors shadow-md border border-gray-800"
                         aria-label="View on GitHub"
                     >
-                        <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="20"
-                            height="20"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            className="inline-block"
-                        >
-                            <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M12 2C6.477 2 2 6.484 2 12.021c0 4.428 2.865 8.184 6.839 9.504.5.092.682-.217.682-.483 0-.237-.009-.868-.014-1.703-2.782.605-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.004.07 1.532 1.032 1.532 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.339-2.221-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.987 1.029-2.686-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.025A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.295 2.748-1.025 2.748-1.025.546 1.378.202 2.397.1 2.65.64.699 1.028 1.593 1.028 2.686 0 3.847-2.337 4.695-4.566 4.944.359.309.678.919.678 1.852 0 1.336-.012 2.417-.012 2.747 0 .268.18.579.688.481C19.138 20.2 22 16.447 22 12.021 22 6.484 17.523 2 12 2z"
-                            />
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 2C6.477 2 2 6.484 2 12.021c0 4.428 2.865 8.184 6.839 9.504.5.092.682-.217.682-.483 0-.237-.009-.868-.014-1.703-2.782.605-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.463-1.11-1.463-.908-.62.069-.608.069-.608 1.004.07 1.532 1.032 1.532 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.339-2.221-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.987 1.029-2.686-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.025A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.295 2.748-1.025 2.748-1.025.546 1.378.202 2.397.1 2.65.64.699 1.028 1.593 1.028 2.686 0 3.847-2.337 4.695-4.566 4.944.359.309.678.919.678 1.852 0 1.336-.012 2.417-.012 2.747 0 .268.18.579.688.481C19.138 20.2 22 16.447 22 12.021 22 6.484 17.523 2 12 2z" />
                         </svg>
                         <span className="font-medium">GitHub</span>
                     </a>
                 </div>
 
-                <Card className="mb-8">
-                    <CardHeader>
-                        <CardTitle>Select Model</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="flex flex-col gap-3 sm:grid sm:grid-cols-2 md:grid-cols-4">
-                            {(Object.keys(MODELS) as ModelId[]).map(id => (
-                                <Button
-                                    key={id}
-                                    variant={
-                                        selectedModelId === id
-                                            ? "default"
-                                            : ready && downloadPct === 1
-                                                ? "secondary"
-                                                : "outline"
-                                    }
-                                    onClick={() => handleModelButtonClick(id)}
-                                    disabled={downloadPct !== null && downloadPct < 1}
-                                    className={`w-full flex flex-col items-start justify-center px-3 py-2 min-h-[56px] ${selectedModelId === id ? "ring-2 ring-primary" : ""}`}
-                                >
-                                    <div className="flex items-center w-full">
-                                        {selectedModelId === id && (
-                                            <span className="mr-2">✅</span>
-                                        )}
-                                        <span className="font-semibold">{id}</span>
-                                    </div>
-                                    <span className="text-xs text-muted-foreground mt-1">
-                                        {cachedModels[id]
-                                            ? "cached"
-                                            : `${MODELS[id].sizeMB} MB`}
-                                    </span>
-                                </Button>
-                            ))}
-                        </div>
+                {/* model selector ----------------------------------------- */}
+                <ModelSelector
+                    grouped={groupedMemo}
+                    fetchError={fetchError}
+                    selectedId={selectedModelId}
+                    onSelect={requestModel}
+                    downloadPct={downloadPct}
+                    ready={ready}
+                    onClearCache={async () => {
+                        log("js: clearing model cache …");
+                        const db = await openDB();
+                        await new Promise<void>((ok, err) => {
+                            const tx = db.transaction(DB_STORE, "readwrite");
+                            const r = tx.objectStore(DB_STORE).clear();
+                            r.onsuccess = () => ok();
+                            r.onerror = () => err(r.error);
+                        });
+                        setCachedModels({});
+                        setReady(false);
+                    }}
+                />
 
-                        {downloadPct !== null && downloadPct < 1 && (
-                            <div className="space-y-2">
-                                <div className="flex justify-between text-sm">
-                                    <span>Downloading</span>
-                                    <span>{(downloadPct * 100).toFixed(1)}%</span>
-                                </div>
-                                <Progress value={downloadPct * 100} />
-                            </div>
-                        )}
-
-                        <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                Status:
-                                <Badge variant={ready ? "success" : "secondary"}>
-                                    {ready ? 'Ready' : downloadPct !== null ? `Downloading` : 'Idle'}
-                                </Badge>
-                            </div>
-                            <Button
-                                variant="outline"
-                                onClick={clearCache}
-                                /* 🔒 disable while download is running */
-                                disabled={downloadPct !== null && downloadPct < 1}
-                            >
-                                Clear Cache
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
-
+                {/* transcription ------------------------------------------ */}
                 <Card className="mb-8">
                     <CardHeader>
                         <CardTitle className="flex items-center justify-between">
                             <span>Transcription</span>
                             <div className="flex items-center gap-2">
                                 <span className="text-sm font-normal">Status:</span>
-                                <Badge variant={isRecording ? "default" : "outline"}>
+                                <Badge variant={isRecording ? 'default' : 'outline'}>
                                     <span ref={statusRef}>not started</span>
                                 </Badge>
                             </div>
@@ -528,12 +501,11 @@ export default function StreamClient() {
                         >
                             [transcription will appear here]
                         </div>
-
                         <div className="flex gap-3 w-full">
                             <Button
                                 onClick={startWhisper}
                                 disabled={!ready || !wasmReady || isRecording}
-                                variant={isRecording ? "secondary" : "default"}
+                                variant={isRecording ? 'secondary' : 'default'}
                                 className="flex-1"
                             >
                                 Start Recording
@@ -550,18 +522,12 @@ export default function StreamClient() {
                     </CardContent>
                 </Card>
 
-                {/* Add a toggle button for advanced users */}
+                {/* debug log ---------------------------------------------- */}
                 <div className="flex justify-end mb-4">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowDebugLog(v => !v)}
-                    >
-                        {showDebugLog ? "Hide Debug Log" : "Show Debug Log"}
+                    <Button variant="outline" size="sm" onClick={() => setShowDebugLog((v) => !v)}>
+                        {showDebugLog ? 'Hide Debug Log' : 'Show Debug Log'}
                     </Button>
                 </div>
-
-                {/* Conditionally render the debug log */}
                 {showDebugLog && (
                     <Card>
                         <CardHeader>
@@ -578,7 +544,7 @@ export default function StreamClient() {
                     </Card>
                 )}
 
-                {/* --- Confirmation Modal --- */}
+                {/* confirmation modal ------------------------------------- */}
                 <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
                     <DialogContent>
                         <DialogHeader>
@@ -586,14 +552,18 @@ export default function StreamClient() {
                         </DialogHeader>
                         <div>
                             <p>
-                                This model is about <b>{pendingModelId ? MODELS[pendingModelId].sizeMB : ''} MB</b> and will be downloaded to your device for fast, private transcription.
-                                <br />
-                                You can easily delete it later by clicking <b>Clear Cache</b>.
+                                This model is approximately{' '}
+                                <b>
+                                    {pendingSizeMB !== null ? `${pendingSizeMB.toFixed(0)} MB` : "unknown size"}
+                                </b>{' '}
+                                and will be downloaded to your device for private, offline transcription.
                             </p>
                         </div>
                         <DialogFooter>
-                            <Button variant="outline" onClick={handleCancelDownload}>Cancel</Button>
-                            <Button onClick={handleConfirmDownload}>Download</Button>
+                            <Button variant="outline" onClick={() => setShowConfirmModal(false)}>
+                                Cancel
+                            </Button>
+                            <Button onClick={confirmDownload}>Download</Button>
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
