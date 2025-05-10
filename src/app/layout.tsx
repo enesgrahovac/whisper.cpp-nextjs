@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-    title: "Whisper.cpp on Next.js",
+    title: "Speech-to-Text 100% client-side",
     description: "Open sourced by Enes Grahovac",
 };
 
