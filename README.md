@@ -2,12 +2,12 @@
 
 <p align="center">
   <a href="https://whisper.enesxgrahovac.com" target="_blank" rel="noopener noreferrer" style="display:inline-block; padding:12px 24px; background:#0070f3; color:#fff; border-radius:6px; font-weight:bold; text-decoration:none; font-size:1.1em;">
-    🚀 Live Demo &rarr; whisper.enesxgrahovac.com
+    🚀 Live&nbsp;Demo&nbsp;→&nbsp;whisper.enesxgrahovac.com
   </a>
 </p>
 
 Real-time speech recognition running _entirely in the browser_.  
-No server, no external API keys – just WebAssembly, Web Audio, and IndexedDB.
+No server, no external API keys – just WebAssembly, Web Audio and IndexedDB.
 
 ---
 
@@ -15,8 +15,8 @@ No server, no external API keys – just WebAssembly, Web Audio, and IndexedDB.
 
 - Whisper model executed in the browser via WebAssembly (compiled with Emscripten).
 - Next.js 15 (App Router) + React 19 + TypeScript.
-- Model files (~30–140 MB) are transparently **cached in IndexedDB** after the first download.
-- Works offline once a model is cached.
+- Model files (~30-140 MB) are transparently **cached in IndexedDB** after the first download.
+- Works offline once a model is cached – use the **Clear Cache** button in the UI to remove them.
 - Shadcn/UI + Tailwind v4 for the UI.
 
 ---
@@ -24,10 +24,10 @@ No server, no external API keys – just WebAssembly, Web Audio, and IndexedDB.
 ## 📺 Quick Start
 
 ```bash
-git clone https://github.com/your-name/whisper.cpp-nextjs.git
+git clone https://github.com/enesgrahovac/whisper.cpp-nextjs.git
 cd whisper.cpp-nextjs
-pnpm install         # or npm / yarn / bun
-pnpm dev             # localhost:3000
+pnpm install          # or npm / yarn / bun
+pnpm dev              # localhost:3000
 ```
 
 The first time you select a model it will be downloaded and stored locally (see “Caching” below).
@@ -49,33 +49,33 @@ We are, quite literally, **standing on the shoulders of giants** – enormous th
 
 ## 🔐 Cross-Origin Isolation
 
-Running large WebAssembly modules that use `SharedArrayBuffer` requires the page to be cross-origin isolated. In Next.js we achieve that by adding the following response header in `next.config.ts`:
+Running large WebAssembly modules that use `SharedArrayBuffer` requires the page to be cross-origin isolated.  
+In this repo we do that in `next.config.ts`:
 
 ```ts
 // next.config.ts
 export default {
   async headers() {
-    return [
-      {
-        source: "/:path*",
-        headers: [
-          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-          { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
-        ],
-      },
+    const securityHeaders = [
+      { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+      // Safari (and everything else) works with require-corp ↓
+      { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
+      // Recommended when using COEP=require-corp
+      { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
     ];
+    return [{ source: "/:path*", headers: securityHeaders }];
   },
 };
 ```
 
-(You can swap `credentialless` for `require-corp` if you run your own static file server with proper CORP headers.)
+If you _control_ your static asset server (and serve proper `Cross-Origin-Resource-Policy` headers) you can switch `require-corp` to `credentialless`.
 
 ---
 
 ## 📦 Caching & Storage
 
 - Models are stored in an IndexedDB database called `whisper-model-cache`.
-- Use the “Clear Cache” button in the UI, or manually clear the browser’s site-data if you run out of storage.
+- Use the **Clear Cache** button in the UI, or manually clear the browser’s site-data if you run out of storage.
 
 ---
 
@@ -99,7 +99,8 @@ For larger changes, please open an issue first so we can discuss direction and s
 <summary>Which browsers are supported?</summary>
 
 Any browser that supports `SharedArrayBuffer` _and_ cross-origin isolation.  
-That includes recent versions of Chrome/Edge/Opera and Firefox with `privacy.partition.always_partition_third_party_non_partitioned_state=false`.
+That includes recent versions of Chrome/Edge/Opera and Firefox with  
+`privacy.partition.always_partition_third_party_non_partitioned_state=false`.
 
 </details>
 
@@ -110,11 +111,12 @@ The UI currently lists Tiny & Base (and their Q5_1 quantised versions).
 If you compile another `ggml-*.bin` model, just add an entry to `MODELS` in `src/components/StreamClient.tsx`.
 
 </details>
+
 <details>
 <summary>What about uploading audio files?</summary>
 
 The demo currently only supports real-time transcription of live audio.  
-You can feel free to contribute a file upload feature!
+Feel free to contribute a file-upload feature!
 
 </details>
 
@@ -124,5 +126,4 @@ You can feel free to contribute a file upload feature!
 
 - [ggerganov/whisper.cpp](https://github.com/ggerganov/whisper.cpp) – the core magic.
 - [shadcn/ui](https://ui.shadcn.com/) – beautiful, headless UI primitives.
-- [Geist font](https://vercel.com/font/geist) – typography.
-- Everyone who filed issues / PRs and tested early versions. ❤️
+- Everyone who filed issues / PRs and tested early versions.
