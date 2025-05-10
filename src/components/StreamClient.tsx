@@ -12,6 +12,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 /* ---------- constants & types ---------- */
 type ModelId = 'tiny.en' | 'base.en' | 'tiny-en-q5_1' | 'base-en-q5_1';
@@ -90,6 +91,9 @@ export default function StreamClient() {
     const [cachedModels, setCachedModels] = useState<Record<ModelId, boolean>>({} as Record<ModelId, boolean>);
     // Add state for debug log visibility
     const [showDebugLog, setShowDebugLog] = useState(false);
+    // Modal state
+    const [pendingModelId, setPendingModelId] = useState<ModelId | null>(null);
+    const [showConfirmModal, setShowConfirmModal] = useState(false);
 
     /* log helper ----------------------------------------------------- */
     const log = useCallback((msg: string) => {
@@ -180,33 +184,49 @@ export default function StreamClient() {
         }
     };
 
+    // --- Modified fetchWithProgress for mobile fallback ---
     const fetchWithProgress = async (
         url: string,
         cb: (pct: number) => void
     ): Promise<Uint8Array> => {
-        const r = await fetch(url);
-        if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
-        const total = Number(r.headers.get('Content-Length')) || 0;
-        const reader = r.body.getReader();
-        const chunks: Uint8Array[] = [];
-        let received = 0;
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            if (value) {
-                chunks.push(value);
-                received += value.length;
-                if (total) cb(received / total);
+        try {
+            // Try streaming fetch first
+            const r = await fetch(url);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            if (r.body) {
+                const total = Number(r.headers.get('Content-Length')) || 0;
+                const reader = r.body.getReader();
+                const chunks: Uint8Array[] = [];
+                let received = 0;
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    if (value) {
+                        chunks.push(value);
+                        received += value.length;
+                        if (total) cb(received / total);
+                    }
+                }
+                const out = new Uint8Array(received);
+                let pos = 0;
+                for (const c of chunks) {
+                    out.set(c, pos);
+                    pos += c.length;
+                }
+                return out;
             }
+            // Fallback: non-streaming fetch (for mobile)
+            const arrBuf = await r.arrayBuffer();
+            cb(1);
+            return new Uint8Array(arrBuf);
+        } catch (e) {
+            // Fallback: non-streaming fetch (for mobile)
+            const r = await fetch(url);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const arrBuf = await r.arrayBuffer();
+            cb(1);
+            return new Uint8Array(arrBuf);
         }
-        /* concat */
-        const out = new Uint8Array(received);
-        let pos = 0;
-        for (const c of chunks) {
-            out.set(c, pos);
-            pos += c.length;
-        }
-        return out;
     };
 
     /* ---------- model loader -------------------------------------- */
@@ -354,6 +374,25 @@ export default function StreamClient() {
         setIsTranscriptPinned(pinned);
     }, []);
 
+    // --- Modal logic for confirmation before download ---
+    const handleModelButtonClick = (id: ModelId) => {
+        setPendingModelId(id);
+        setShowConfirmModal(true);
+    };
+
+    const handleConfirmDownload = async () => {
+        if (pendingModelId) {
+            setShowConfirmModal(false);
+            await loadModel(pendingModelId);
+            setPendingModelId(null);
+        }
+    };
+
+    const handleCancelDownload = () => {
+        setShowConfirmModal(false);
+        setPendingModelId(null);
+    };
+
     return (
         <div className="container mx-auto px-4 py-8 max-w-4xl">
             <Script src="/whisper/stream/helpers.js" strategy="afterInteractive" />
@@ -411,7 +450,7 @@ export default function StreamClient() {
                                             ? "secondary"
                                             : "outline"
                                 }
-                                onClick={() => loadModel(id)}
+                                onClick={() => handleModelButtonClick(id)}
                                 disabled={downloadPct !== null && downloadPct < 1}
                                 className={`w-full flex flex-col items-start justify-center px-3 py-2 min-h-[56px] ${selectedModelId === id ? "ring-2 ring-primary" : ""}`}
                             >
@@ -527,6 +566,26 @@ export default function StreamClient() {
                     </CardContent>
                 </Card>
             )}
+
+            {/* --- Confirmation Modal --- */}
+            <Dialog open={showConfirmModal} onOpenChange={setShowConfirmModal}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Download Model?</DialogTitle>
+                    </DialogHeader>
+                    <div>
+                        <p>
+                            This model is about <b>{pendingModelId ? MODELS[pendingModelId].sizeMB : ''} MB</b> and will be downloaded to your device for fast, private transcription.
+                            <br />
+                            You can easily delete it later by clicking <b>Clear Cache</b>.
+                        </p>
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={handleCancelDownload}>Cancel</Button>
+                        <Button onClick={handleConfirmDownload}>Download</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
