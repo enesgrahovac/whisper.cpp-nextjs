@@ -149,6 +149,12 @@ const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
         // Disable actions while downloading
         const isDownloading = downloadPct !== null && downloadPct < 1;
 
+        // Handler to clear cache and reset selection/status
+        const handleClearCache = () => {
+            onClearCache();
+            onSelect('');
+        };
+
         return (
             <Card className="mb-8">
                 <CardHeader>
@@ -286,7 +292,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
                             </div>
                             <Button
                                 variant="outline"
-                                onClick={onClearCache}
+                                onClick={handleClearCache}
                                 disabled={isDownloading}
                             >
                                 Clear Cache
