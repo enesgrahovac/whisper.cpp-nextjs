@@ -486,6 +486,8 @@ export default function StreamClient() {
                             <Button
                                 variant="outline"
                                 onClick={clearCache}
+                                /* 🔒 disable while download is running */
+                                disabled={downloadPct !== null && downloadPct < 1}
                             >
                                 Clear Cache
                             </Button>
