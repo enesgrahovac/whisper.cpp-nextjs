@@ -146,6 +146,9 @@ const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
         ready,
         onClearCache,
     }) => {
+        // Disable actions while downloading
+        const isDownloading = downloadPct !== null && downloadPct < 1;
+
         return (
             <Card className="mb-8">
                 <CardHeader>
@@ -202,6 +205,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
                                                         variant={isActive ? 'default' : 'outline'}
                                                         className="flex flex-col items-start justify-center px-3 py-2 min-h-[56px]"
                                                         onClick={() => onSelect(m.id)}
+                                                        disabled={isDownloading}
                                                     >
                                                         <Tooltip>
                                                             <TooltipTrigger asChild>
@@ -280,7 +284,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = React.memo(
                                             : "Idle"}
                                 </Badge>
                             </div>
-                            <Button variant="outline" onClick={onClearCache}>
+                            <Button
+                                variant="outline"
+                                onClick={onClearCache}
+                                disabled={isDownloading}
+                            >
                                 Clear Cache
                             </Button>
                         </div>
