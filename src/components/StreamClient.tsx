@@ -317,6 +317,8 @@ export default function StreamClient() {
         stopRecording();
         setIsRecording(false);
         if (pollTimerRef.current) window.clearInterval(pollTimerRef.current);
+        // Reset the status text when stopping
+        if (statusRef.current) statusRef.current.textContent = "recording stopped";
     };
 
     /* ---------- render ------------------------------------------- */
