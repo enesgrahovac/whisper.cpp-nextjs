@@ -1,6 +1,10 @@
 # Whisper.cpp on Next.js – 100% Client-side Speech-to-Text
 
-Live demo ➜ **URLCOMINGSOON**
+<p align="center">
+  <a href="https://whisper.enesxgrahovac.com" target="_blank" rel="noopener noreferrer" style="display:inline-block; padding:12px 24px; background:#0070f3; color:#fff; border-radius:6px; font-weight:bold; text-decoration:none; font-size:1.1em;">
+    🚀 Live Demo &rarr; whisper.enesxgrahovac.com
+  </a>
+</p>
 
 Real-time speech recognition running _entirely in the browser_.  
 No server, no external API keys – just WebAssembly, Web Audio, and IndexedDB.
