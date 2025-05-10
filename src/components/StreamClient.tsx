@@ -167,82 +167,29 @@ export default function StreamClient() {
         url: string,
         cb: (pct: number) => void
     ): Promise<Uint8Array> => {
-        // helper so we can sprinkle logs everywhere
-        const dbg = (m: string) => log(`download: ${m}`);
-
-        dbg(`requesting ${url}`);
-
-        let response: Response;
-        try {
-            response = await fetch(url, { credentials: "omit", cache: "no-cache" });
-        } catch (err) {
-            dbg(`network error → ${err}`);
-            throw err;
-        }
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const contentLength = Number(response.headers.get("Content-Length")) || 0;
-        dbg(
-            `response ok – ${contentLength ? `${(contentLength / 1_048_576).toFixed(1)} MB` : "size unknown"
-            }`
-        );
-
-        /* ---------- 1. streaming path ------------------------------------------------ */
-        if (response.body && typeof response.body.getReader === "function") {
-            try {
-                dbg("using streaming reader (ReadableStream)");
-                const reader = response.body.getReader();
-
-                const chunks: Uint8Array[] = [];
-                let received = 0;
-
-                while (true) {
-                    const { value, done } = await reader.read();
-                    if (done) break;
-                    if (value) {
-                        chunks.push(value);
-                        received += value.length;
-
-                        // update progress bar
-                        if (contentLength) {
-                            cb(received / contentLength);
-                        } else {
-                            // fall back to coarse updates every 5 MB
-                            if (received % (5 * 1_048_576) < value.length) {
-                                dbg(`received ${(received / 1_048_576).toFixed(1)} MB`);
-                            }
-                        }
-                    }
-                }
-
-                cb(1); // make sure the UI shows 100 %
-                dbg("stream finished, stitching chunks");
-
-                const out = new Uint8Array(received);
-                let pos = 0;
-                for (const c of chunks) {
-                    out.set(c, pos);
-                    pos += c.length;
-                }
-                dbg("done ✅");
-                return out;
-            } catch (err) {
-                // Some browsers (Safari) occasionally abort the stream – fall back below
-                dbg(`streaming failed → ${err}`);
+        const r = await fetch(url);
+        if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+        const total = Number(r.headers.get('Content-Length')) || 0;
+        const reader = r.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) {
+                chunks.push(value);
+                received += value.length;
+                if (total) cb(received / total);
             }
-        } else {
-            dbg("ReadableStream not supported, falling back to arrayBuffer()");
         }
-
-        /* ---------- 2. arrayBuffer() fallback --------------------------------------- */
-        dbg("downloading via arrayBuffer() (no progress events)");
-        const buf = await response.arrayBuffer();
-        cb(1);
-        dbg(`arrayBuffer() finished – ${(buf.byteLength / 1_048_576).toFixed(1)} MB`);
-        return new Uint8Array(buf);
+        /* concat */
+        const out = new Uint8Array(received);
+        let pos = 0;
+        for (const c of chunks) {
+            out.set(c, pos);
+            pos += c.length;
+        }
+        return out;
     };
 
     /* ---------- model loader -------------------------------------- */
