@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 /* ---------- constants & types ---------- */
-type ModelId = 'tiny.en' | 'base.en' | 'tiny-en-q5_1' | 'base-en-q5_1';
+type ModelId = 'tiny.en' | 'base.en' | 'tiny-en-q5_1' | 'base-en-q5_1' | 'small.en-q5_1' | 'large-v3-turbo-q5_0' | 'large-v3-turbo-q8_0';
 interface ModelMeta {
     url: string;
     sizeMB: number;
@@ -36,6 +36,18 @@ const MODELS: Record<ModelId, ModelMeta> = {
     'base-en-q5_1': {
         url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en-q5_1.bin',
         sizeMB: 57,
+    },
+    'small.en-q5_1': {
+        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en-q5_1.bin',
+        sizeMB: 181,
+    },
+    'large-v3-turbo-q5_0': {
+        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin',
+        sizeMB: 574,
+    },
+    'large-v3-turbo-q8_0': {
+        url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin',
+        sizeMB: 834,
     },
 };
 
