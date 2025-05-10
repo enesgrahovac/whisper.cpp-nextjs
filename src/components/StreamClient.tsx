@@ -510,7 +510,7 @@ export default function StreamClient() {
                     <CardContent>
                         <div
                             ref={transcriptRef}
-                            className="min-h-[200px] max-h-[300px] overflow-y-auto p-4 rounded-md bg-muted/50 font-mono text-sm mb-4"
+                            className="h-[300px] overflow-y-auto p-4 rounded-md bg-muted/50 font-mono text-sm mb-4"
                             style={{ whiteSpace: 'pre-line' }}
                             onScroll={handleTranscriptScroll}
                         >
@@ -559,7 +559,7 @@ export default function StreamClient() {
                             <Textarea
                                 ref={logRef}
                                 rows={10}
-                                className="font-mono text-xs bg-black text-green-400 resize-none min-h-[150px] max-h-[150px] overflow-y-auto"
+                                className="font-mono text-xs bg-black text-green-400 resize-none h-[150px] overflow-y-auto"
                                 readOnly
                             />
                         </CardContent>
