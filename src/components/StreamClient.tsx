@@ -476,6 +476,8 @@ export default function StreamClient() {
                         });
                         setCachedModels({});
                         setReady(false);
+                        setSelectedModelId(null);
+                        setPct(null);
                     }}
                 />
 
